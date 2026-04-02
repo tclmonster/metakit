@@ -8,6 +8,23 @@
 
 #include <tcl.h>
 
+/* Tcl 9 compatibility shim */
+#ifndef TCL_SIZE_MAX
+# define Tcl_GetSizeIntFromObj Tcl_GetIntFromObj
+# define TCL_SIZE_MAX      INT_MAX
+# ifndef Tcl_Size
+    typedef int Tcl_Size;
+# endif
+# define TCL_SIZE_MODIFIER ""
+#endif
+
+/* Tcl 9 always has threads enabled; TCL_THREADS is no longer defined */
+#if TCL_MAJOR_VERSION > 8
+# ifndef TCL_THREADS
+#  define TCL_THREADS 1
+# endif
+#endif
+
 #ifdef BUILD_Mk4tcl
 #undef TCL_STORAGE_CLASS
 #define TCL_STORAGE_CLASS DLLEXPORT
