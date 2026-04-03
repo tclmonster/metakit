@@ -359,8 +359,8 @@ static int mkOutput(ClientData instanceData, const char *buf, int toWrite, int
   return  - 1;
 }
 
-static Tcl_WideInt mkWideSeek(ClientData instanceData, Tcl_WideInt offset,
-  int seekMode, int *errorCodePtr) {
+static int mkSeek(ClientData instanceData, long offset, int seekMode, int
+  *errorCodePtr) {
   MkChannel *chan = (MkChannel*)instanceData;
 
   switch (seekMode) {
@@ -377,7 +377,7 @@ static Tcl_WideInt mkWideSeek(ClientData instanceData, Tcl_WideInt offset,
       break;
   }
 
-  chan->DataSeek((t4_i32)offset);
+  chan->DataSeek(offset);
   return offset;
 }
 
@@ -403,31 +403,18 @@ static int mkGetFile(ClientData instanceData, int direction, ClientData
   return TCL_ERROR;
 }
 
-static int mkClose2(ClientData instanceData, Tcl_Interp *interp, int flags) {
-  if ((flags & (TCL_CLOSE_READ | TCL_CLOSE_WRITE)) != 0) {
-    return EINVAL;
-  }
-  return mkClose(instanceData, interp);
-}
-
 static Tcl_ChannelType mkChannelType =  {
-  "mk",                                 /* Type name.                                  */
-  TCL_CHANNEL_VERSION_5,                /* Version of the channel type.                */
-  0,                                    /* Not used any more (was closeProc).          */
-  mkInput,                              /* Handle read request                         */
-  (Tcl_DriverOutputProc*)mkOutput,      /* Handle write request                        */
-  0,                                    /* Not used any more (was seekProc).           */
-  0,                                    /* Set options.              NULL'able          */
-  0,                                    /* Get options.              NULL'able          */
-  (Tcl_DriverWatchProc*)mkWatchChannel, /* Initialize notifier                         */
-  mkGetFile,                            /* Get OS handle from the channel.             */
-  mkClose2,                             /* Close channel (close2Proc).                 */
-  0,                                    /* Set blocking mode.        NULL'able          */
-  0,                                    /* Flush.                    NULL'able          */
-  0,                                    /* Handle events.            NULL'able          */
-  mkWideSeek,                            /* Wide seek.                NULL'able          */
-  0,                                    /* Thread action.            NULL'able          */
-  0                                     /* Truncate.                 NULL'able          */
+  "mk",  /* Type name.                  */
+  0,  /* Set blocking/nonblocking behaviour. NULL'able */
+  mkClose,  /* Close channel, clean instance data      */
+  mkInput,  /* Handle read request               */
+  (Tcl_DriverOutputProc*)mkOutput,  /* Handle write request              */
+  (Tcl_DriverSeekProc*)mkSeek,  /* Move location of access point.    NULL'able
+    */
+  0,  /* Set options.              NULL'able */
+  0,  /* Get options.              NULL'able */
+  (Tcl_DriverWatchProc*)mkWatchChannel,  /* Initialize notifier               */
+  mkGetFile /* Get OS handle from the channel.         */
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -499,7 +486,7 @@ int SetAsObj(Tcl_Interp *interp, const c4_RowRef &row_, const c4_Property
   switch (prop_.Type()) {
     case 'S':
        {
-        Tcl_Size len;
+        int len;
         const char *ptr = Tcl_GetStringFromObj(obj_, &len);
         prop_(row_).SetData(c4_Bytes(ptr, len + 1));
       }
@@ -507,7 +494,7 @@ int SetAsObj(Tcl_Interp *interp, const c4_RowRef &row_, const c4_Property
 
     case 'B':
        {
-        Tcl_Size len;
+        int len;
         const t4_byte *ptr = Tcl_GetByteArrayFromObj(obj_, &len);
         prop_(row_).SetData(c4_Bytes(ptr, len));
       }
@@ -1053,7 +1040,7 @@ const c4_Property &AsProperty(Tcl_Obj *objPtr, const c4_View &view_) {
 
     char type = 'S';
 
-    Tcl_Size length;
+    int length;
     char *string = Tcl_GetStringFromObj(objPtr, &length);
     c4_Property *prop;
 
@@ -1183,12 +1170,12 @@ static void UpdateStringOfCursor(Tcl_Obj *cursorPtr) {
   long index = AsIndex(cursorPtr);
   if (index >= 0) {
     char buf[20];
-    sprintf(buf, "%s%ld", s.IsEmpty() ? "" : "!", index);
+    sprintf(buf, "%s%d", s.IsEmpty() ? "" : "!", index);
     s += buf;
   }
 
   cursorPtr->length = s.GetLength();
-  cursorPtr->bytes = strcpy((char*)Tcl_Alloc(cursorPtr->length + 1), s);
+  cursorPtr->bytes = strcpy(Tcl_Alloc(cursorPtr->length + 1), s);
   LeaveMutex();
 }
 
@@ -1408,9 +1395,9 @@ int Tcl::tcl_SetObjResult(Tcl_Obj *obj_) {
 }
 
 int Tcl::tcl_ListObjLength(Tcl_Obj *obj_) {
-  Tcl_Size result;
+  int result;
   _error = Tcl_ListObjLength(interp, obj_, &result);
-  return _error ?  - 1: (int)result;
+  return _error ?  - 1: result;
 }
 
 void Tcl::tcl_ListObjAppendElement(Tcl_Obj *obj_, Tcl_Obj *value_) {
@@ -1481,7 +1468,7 @@ Tcl_Obj *Tcl::tcl_NewStringObj(const char *str_, int len_) {
 
 void Tcl::list2desc(Tcl_Obj *in_, Tcl_Obj *out_) {
   Tcl_Obj *o,  **ov;
-  Tcl_Size oc;
+  int oc;
   if (Tcl_ListObjGetElements(0, in_, &oc, &ov) == TCL_OK && oc > 0) {
     char sep = '[';
     for (int i = 0; i < oc; ++i) {
@@ -1665,7 +1652,7 @@ int MkTcl::RowCmd() {
         int size = asView(var).GetSize();
         changeIndex(var) = size;
 
-        Tcl_Size oc = objc - 3;
+        int oc = objc - 3;
         Tcl_Obj **ov = (Tcl_Obj **)objv + 3;
 
         // 2003-03-16, allow giving all pairs as list
@@ -1816,7 +1803,7 @@ int MkTcl::FileCmd() {
         }
 
         const char *name = Tcl_GetStringFromObj(objv[2], 0);
-        Tcl_Size len = 0;
+        int len = 0;
         const char *file = objc < 4 ? "": Tcl_GetStringFromObj(objv[3], &len);
 #ifdef WIN32
         np = work.Define(name, file, mode, shared);
@@ -1836,7 +1823,7 @@ int MkTcl::FileCmd() {
 
     case 1:
        { // end
-        Tcl_Size len;
+        int len;
         const char *name = Tcl_GetStringFromObj(objv[2], &len);
         c4_FileStrategy strat;
 #ifdef WIN32
@@ -2584,7 +2571,7 @@ static void DelProc(ClientData cd_, Tcl_Interp *ip_) {
 }
 
 static int Mktcl_Cmds(Tcl_Interp *interp, bool /*safe*/) {
-  if (Tcl_InitStubs(interp, "8.1-10", 0) == 0)
+  if (Tcl_InitStubs(interp, "8.1", 0) == 0)
     return TCL_ERROR;
 
   // Create workspace if not present.
